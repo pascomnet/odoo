@@ -34,25 +34,25 @@ from openerp.tools.translate import _
 ADDRESS_FORMAT_LAYOUTS = {
     '%(city)s %(state_code)s\n%(zip)s': """
         <div class="address_format">
-            <field name="city" placeholder="City" style="width: 50%%"/>
-            <field name="state_id" class="oe_no_button" placeholder="State" style="width: 47%%" options='{"no_open": true}'/>
+            <field name="city" placeholder="%(city)s" style="width: 50%%"/>
+            <field name="state_id" class="oe_no_button" placeholder="%(state)s" style="width: 47%%" options='{"no_open": true}'/>
             <br/>
-            <field name="zip" placeholder="ZIP"/>
+            <field name="zip" placeholder="%(zip)s"/>
         </div>
     """,
     '%(zip)s %(city)s': """
         <div class="address_format">
-            <field name="zip" placeholder="ZIP" style="width: 40%%"/>
-            <field name="city" placeholder="City" style="width: 57%%"/>
+            <field name="zip" placeholder="%(zip)s" style="width: 40%%"/>
+            <field name="city" placeholder="%(city)s" style="width: 57%%"/>
             <br/>
-            <field name="state_id" class="oe_no_button" placeholder="State" options='{"no_open": true}'/>
+            <field name="state_id" class="oe_no_button" placeholder="%(state)s" options='{"no_open": true}'/>
         </div>
     """,
     '%(city)s\n%(state_name)s\n%(zip)s': """
         <div class="address_format">
-            <field name="city" placeholder="City"/>
-            <field name="state_id" class="oe_no_button" placeholder="State" options='{"no_open": true}'/>
-            <field name="zip" placeholder="ZIP"/>
+            <field name="city" placeholder="%(city)s"/>
+            <field name="state_id" class="oe_no_button" placeholder="%(state)s" options='{"no_open": true}'/>
+            <field name="zip" placeholder="%(zip)s"/>
         </div>
     """
 }
@@ -66,7 +66,13 @@ class format_address(object):
             if k in fmt:
                 doc = etree.fromstring(arch)
                 for node in doc.xpath("//div[@class='address_format']"):
-                    tree = etree.fromstring(v)
+                    tree = etree.fromstring(v % {'city': _('City'), 'zip': _('ZIP'), 'state': _('State')})
+                    for child in node.xpath(".//field"):
+                        for field in tree.xpath("//field[@name='%s']" % child.attrib.get("name")):
+                            if child.attrib.get("modifiers"):
+                                field.attrib['modifiers'] = child.attrib.get('modifiers')
+                            if child.attrib.get("on_change"):
+                                field.attrib["on_change"] = child.attrib.get("on_change")
                     node.getparent().replace(node, tree)
                 arch = etree.tostring(doc)
                 break
@@ -445,7 +451,7 @@ class res_partner(osv.Model, format_address):
         partners that aren't `commercial entities` themselves, and will be
         delegated to the parent `commercial entity`. The list is meant to be
         extended by inheriting classes. """
-        return ['vat']
+        return ['vat', 'credit_limit']
 
     def _commercial_sync_from_company(self, cr, uid, partner, context=None):
         """ Handle sync of commercial fields when a new parent commercial entity is set,
@@ -524,6 +530,14 @@ class res_partner(osv.Model, format_address):
             if not parent.is_company:
                 parent.write({'is_company': True})
 
+    def unlink(self, cr, uid, ids, context=None):
+        orphan_contact_ids = self.search(cr, uid,
+            [('parent_id', 'in', ids), ('id', 'not in', ids), ('use_parent_address', '=', True)], context=context)
+        if orphan_contact_ids:
+            # no longer have a parent address
+            self.write(cr, uid, orphan_contact_ids, {'use_parent_address': False}, context=context)
+        return super(res_partner, self).unlink(cr, uid, ids, context=context)
+
     def _clean_website(self, website):
         (scheme, netloc, path, params, query, fragment) = urlparse.urlparse(website)
         if not scheme:
@@ -551,6 +565,8 @@ class res_partner(osv.Model, format_address):
 
         result = super(res_partner, self).write(vals)
         for partner in self:
+            if any(u.has_group('base.group_user') for u in partner.user_ids if u != self.env.user):
+                self.env['res.users'].check_access_rights('write')
             self._fields_sync(partner, vals)
         return result
 
@@ -696,7 +712,7 @@ class res_partner(osv.Model, format_address):
         emails = tools.email_split(email)
         if emails:
             email = emails[0]
-        ids = self.search(cr, uid, [('email','ilike',email)], context=context)
+        ids = self.search(cr, uid, [('email','=ilike',email)], context=context)
         if not ids:
             return self.name_create(cr, uid, email, context=context)[0]
         return ids[0]
@@ -731,6 +747,8 @@ class res_partner(osv.Model, format_address):
             adr_pref.add('default')
         result = {}
         visited = set()
+        if isinstance(ids, (int, long)):
+            ids = [ids]
         for partner in self.browse(cr, uid, filter(None, ids), context=context):
             current_partner = partner
             while current_partner:
@@ -753,7 +771,7 @@ class res_partner(osv.Model, format_address):
                 current_partner = current_partner.parent_id
 
         # default to type 'default' or the partner itself
-        default = result.get('default', partner.id)
+        default = result.get('default', ids and ids[0] or False)
         for adr_type in adr_pref:
             result[adr_type] = result.get(adr_type) or default 
         return result

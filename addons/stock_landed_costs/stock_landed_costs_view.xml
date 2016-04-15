@@ -66,7 +66,7 @@
                             <group>
                                 <separator string="Valuation Adjustments"/>
                             </group>
-                            <group>
+                            <group states='draft'>
                                 <button name="compute_landed_cost" string="Compute" type="object" class="oe_right"/>
                             </group>
                         </group>
@@ -190,7 +190,7 @@
                                     <group>
                                         <field name="split_method"/>
                                         <field name="standard_price"/>
-                                        <field name="property_account_expense"/>
+                                        <field name="property_account_expense" domain="[('type','=','other')]"/>
                                     </group>
                                     <group>
                                         <field name="company_id" groups="base.group_multi_company" widget="selection"/>
